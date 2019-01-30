@@ -8,6 +8,9 @@ const {
     uploadStreamToBlockBlob,
     uploadFileToBlockBlob
 } = require('@azure/storage-blob');
+var ExifImage = require('exif').ExifImage;
+
+const exif = require('exif-js');
 
 const fs = require("fs");
 const path = require("path");
@@ -37,14 +40,15 @@ async function showContainerNames(aborter, serviceURL) {
     } while (marker);
 }
 
-async function uploadLocalFile(aborter, containerURL, filePath) {
+async function uploadLocalFile(aborter, containerURL, filePath, options) {
 
     filePath = path.resolve(filePath);
 
     const fileName = path.basename(filePath);
     const blockBlobURL = BlockBlobURL.fromContainerURL(containerURL, fileName);
 
-    return await uploadFileToBlockBlob(aborter, filePath, blockBlobURL);
+    console.log(options);
+    return await uploadFileToBlockBlob(aborter, filePath, blockBlobURL, options);
 }
 
 async function uploadStream(aborter, containerURL, filePath) {
@@ -77,13 +81,25 @@ async function showBlobNames(aborter, containerURL) {
     let marker;
 
     do {
-        response = await containerURL.listBlobFlatSegment(aborter);
+        response = await containerURL.listBlobFlatSegment(aborter, marker, {include: ['metadata']});
         marker = response.marker;
         for(let blob of response.segment.blobItems) {
-            console.log(` - ${ blob.name }`);
+            console.log(` - ${ blob.name }`, blob.metadata);
         }
     } while (marker);
 }
+
+const readExif = async (file) => {
+    return new Promise((resolve, reject) => {
+        new ExifImage({ image : file }, function (error, exifData) {
+            if (error)
+                reject(error);
+            else
+                resolve(exifData)
+        });
+    })
+};
+
 
 async function execute() {
 
@@ -104,8 +120,8 @@ async function execute() {
     console.log("Containers:");
     await showContainerNames(aborter, serviceURL);
 
-    await containerURL.create(aborter);
-    console.log(`Container: "${containerName}" is created`);
+    // await containerURL.create(aborter);
+    // console.log(`Container: "${containerName}" is created`);
 
     await blockBlobURL.upload(aborter, content, content.length);
     console.log(`Blob "${blobName}" is uploaded`);
@@ -116,18 +132,29 @@ async function execute() {
     await uploadStream(aborter, containerURL, localFilePath);
     console.log(`Local file "${localFilePath}" is uploaded as a stream`);
 
-    console.log(`Blobs in "${containerName}" container:`);
-    await showBlobNames(aborter, containerURL);
-
     const downloadResponse = await blockBlobURL.download(aborter, 0);
     const downloadedContent = downloadResponse.readableStreamBody.read(content.length).toString();
     console.log(`Downloaded blob content: "${downloadedContent}"`);
 
-    await blockBlobURL.delete(aborter)
-    console.log(`Block blob "${blobName}" is deleted`);
-    
-    await containerURL.delete(aborter);
-    console.log(`Container "${containerName}" is deleted`);
+    const imagePath = './IMG_2896.JPG';
+    const data = await readExif(imagePath)
+    console.log(data);
+    await uploadLocalFile(aborter, containerURL, imagePath, {
+        metadata: {
+            value1: 'value1',
+            value2: 'value2',
+        }
+    });
+
+    console.log(`Blobs in "${containerName}" container:`);
+    await showBlobNames(aborter, containerURL);
+
+
+    // await blockBlobURL.delete(aborter)
+    // console.log(`Block blob "${blobName}" is deleted`);
+    //
+    // await containerURL.delete(aborter);
+    // console.log(`Container "${containerName}" is deleted`);
 }
 
 execute().then(() => console.log("Done")).catch((e) => console.log(e));
